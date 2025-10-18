@@ -1,0 +1,13 @@
+names:
+- crop
+- weed
+nc: 2
+roboflow:
+  license: CC BY 4.0
+  project: weed-crop-aerial
+  url: https://universe.roboflow.com/roboflow-100/weed-crop-aerial/dataset/2
+  version: 2
+  workspace: roboflow-100
+test: /Users/chandler/Downloads/CVCP/datasets_yolocp/weed-crop-aerial-2/test
+train: /Users/chandler/Downloads/CVCP/datasets_yolocp/weed-crop-aerial-2/train
+val: /Users/chandler/Downloads/CVCP/datasets_yolocp/weed-crop-aerial-2/valid
