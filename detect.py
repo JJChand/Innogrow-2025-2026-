@@ -1,13 +1,24 @@
 import cv2
-from ultralytics import YOLO
+import numpy as np
 from collections import Counter
+import tensorflow as tf
 
-# Load the trained YOLO model
-model_path = "runs/detect/train/weights/best.pt"
-ourmodel = YOLO(model_path)
+# Load the TFLite model
+model_path = "tflite/content/best_int8.tflite"
+interpreter = tf.lite.Interpreter(model_path=model_path)
+interpreter.allocate_tensors()
 
-# Get class names from the model
-class_names = ourmodel.model.names
+# Get input and output details
+input_details = interpreter.get_input_details()
+output_details = interpreter.get_output_details()
+
+# Get the input image dimensions from the model
+image_height = input_details[0]['shape'][1]  # 640
+image_width = input_details[0]['shape'][2]   # 640
+
+# Threshold settings for TFLite model
+conf_threshold = 0.3
+iou_threshold = 0.25
 
 # Open the camera
 cap = cv2.VideoCapture(0)  # 0 is the default camera
@@ -34,14 +45,51 @@ for frame_index in range(num_frames):
         print("Error: Could not read frame.")
         break
 
-    # Run inference on the frame
-    results = ourmodel(frame)  # list of 1 Results object
-    result = results[0]
-
+    # Preprocess the frame for TFLite model
+    frame_resized = cv2.resize(frame, (image_width, image_height))
+    frame_rgb = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
+    frame_np = np.array(frame_rgb, dtype=np.float32)
+    frame_np = frame_np / 255.0  # Normalize to [0, 1]
+    frame_np = frame_np[np.newaxis, :]  # Add batch dimension
+    
+    # Run inference on the frame using TFLite
+    interpreter.set_tensor(input_details[0]['index'], frame_np)
+    interpreter.invoke()
+    
+    # Get output results
+    output = interpreter.get_tensor(output_details[0]['index'])
+    output = output[0]
+    output = output.T
+    
+    # Parse the output
+    boxes_xywh = output[..., :4]  # Coordinates of bounding box (xywh)
+    scores = np.max(output[..., 5:], axis=1)  # Get score value from most likely class
+    classes = np.argmax(output[..., 5:], axis=1)  # Get the most probable class's index
+    
+    # Post-processing: Non-Maximum Suppression (NMS)
+    x, y, w, h = boxes_xywh[:, 0], boxes_xywh[:, 1], boxes_xywh[:, 2], boxes_xywh[:, 3]
+    x1_norm = x - w / 2
+    y1_norm = y - h / 2
+    x2_norm = x + w / 2
+    y2_norm = y + h / 2
+    
+    indices = tf.image.non_max_suppression(
+        boxes=tf.stack([y1_norm, x1_norm, y2_norm, x2_norm], axis=1),
+        scores=scores,
+        max_output_size=50,
+        iou_threshold=iou_threshold,
+        score_threshold=conf_threshold
+    ).numpy()
+    
     # Collect bounding box coordinates
     frame_boxes = []
-    for box in result.boxes:
-        x1, y1, x2, y2 = map(int, box.xyxy[0])  # Get the coordinates
+    for i in indices:
+        box = boxes_xywh[i]
+        x_center, y_center, width, height = box
+        x1 = int((x_center - width / 2))
+        y1 = int((y_center - height / 2))
+        x2 = int((x_center + width / 2))
+        y2 = int((y_center + height / 2))
         frame_boxes.append((x1, y1, x2, y2))
 
     # Append the boxes detected in this frame to all_boxes
@@ -49,7 +97,7 @@ for frame_index in range(num_frames):
 
     # Capture the 10th frame
     if frame_index == 19:  # 0-based index for the 10th frame
-        frame_10 = frame.copy()  # Store a copy of the 10th frame
+        frame_10 = cv2.cvtColor(frame_resized, cv2.COLOR_RGB2BGR)  # Store a copy of the 10th frame (convert back to BGR for OpenCV)
 
 # Release the camera after capturing frames
 cap.release()
